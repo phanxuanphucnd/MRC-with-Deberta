@@ -1,6 +1,7 @@
 tqdm
-transformers==4.5.1
+transformers==4.17.0
 sentencepiece
 matplotlib
 tensorboardX
 sklearn
+torch==1.9.0
