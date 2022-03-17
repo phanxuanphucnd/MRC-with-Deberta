@@ -1,6 +1,6 @@
 #Intensive module
 export SQUAD_DIR=data/bdi-mrc
-export TRAIN_FILE=dev-v2.0.json
+export TRAIN_FILE=train-v2.0.json
 export DEV_FILE=dev-v2.0.json
 python ./run_av.py \
     --model_type deberta-v3 \
@@ -16,8 +16,8 @@ python ./run_av.py \
     --max_seq_length 384 \
     --doc_stride 128 \
     --max_query_length=64 \
-    --per_gpu_train_batch_size=8 \
-    --per_gpu_eval_batch_size=16 \
+    --per_gpu_train_batch_size=32 \
+    --per_gpu_eval_batch_size=64 \
     --warmup_steps=814 \
     --output_dir models/bdi-mrc/debertav3 \
     --eval_all_checkpoints \

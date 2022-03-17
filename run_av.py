@@ -14,35 +14,36 @@ import numpy as np
 from tqdm import tqdm, trange
 from evaluator import eval_squad
 from torch.utils.data import (
-    DataLoader, 
-    RandomSampler, 
-    SequentialSampler, 
-    DistributedSampler
+    DataLoader,
+    RandomSampler,
+    SequentialSampler,
 )
-from transformers import WEIGHTS_NAME, DebertaV2Tokenizer, DebertaV2Config
+from transformers import WEIGHTS_NAME, DebertaV2Tokenizer, DebertaV2Config, RobertaTokenizer, RobertaConfig
 from transformers import (
-    AdamW, 
+    AdamW,
     get_linear_schedule_with_warmup,
     squad_convert_examples_to_features
 )
 from transformers.data.processors.squad import (
-    SquadV1Processor, 
-    SquadV2Processor, 
+    SquadV1Processor,
+    SquadV2Processor,
     SquadResult
 )
 from transformers.data.metrics.squad_metrics import (
-    compute_predictions_logits, 
-    compute_predictions_log_probs, 
+    compute_predictions_logits,
+    compute_predictions_log_probs,
     squad_evaluate
 )
-from modeling_deberta import DebertaV3ForQuestionAnswering
-
+from modeling_deberta import DebertaV3ForQuestionAnsweringAVPool
+from modeling_roberta import RobertaForQuestionAnsweringAVPool
 
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
-    'deberta-v3': (DebertaV2Config, DebertaV3ForQuestionAnswering, DebertaV2Tokenizer),
+    'deberta-v3': (DebertaV2Config, DebertaV3ForQuestionAnsweringAVPool, DebertaV2Tokenizer),
+    'roberta': (RobertaConfig, RobertaForQuestionAnsweringAVPool, RobertaTokenizer)
 }
+
 
 def set_seed(args):
     random.seed(args.seed)
@@ -51,8 +52,10 @@ def set_seed(args):
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
+
 def to_list(tensor):
     return tensor.detach().cpu().tolist()
+
 
 def train(args, train_dataset, model, tokenizer):
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
@@ -68,14 +71,16 @@ def train(args, train_dataset, model, tokenizer):
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
-        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
+        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+         'weight_decay': args.weight_decay},
         {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
+                                                num_training_steps=t_total)
 
     # print(model)
-    
+
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
@@ -90,7 +95,7 @@ def train(args, train_dataset, model, tokenizer):
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch")
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
-    
+
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for step, batch in enumerate(epoch_iterator):
@@ -98,10 +103,10 @@ def train(args, train_dataset, model, tokenizer):
             batch = tuple(t.to(args.device) for t in batch)
 
             inputs = {
-                'input_ids':       batch[0],
-                'attention_mask':  batch[1],
+                'input_ids': batch[0],
+                'attention_mask': batch[1],
                 'start_positions': batch[3],
-                'end_positions':   batch[4],
+                'end_positions': batch[4],
                 'is_impossibles': batch[5]
             }
             # if args.model_type != 'xlm-roberta':
@@ -112,6 +117,7 @@ def train(args, train_dataset, model, tokenizer):
 
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
+            print(f"----- loss: {loss}")
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -139,7 +145,8 @@ def train(args, train_dataset, model, tokenizer):
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
-                    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+                    model_to_save = model.module if hasattr(model,
+                                                            'module') else model  # Take care of distributed/parallel training
                     try:
                         model_to_save.save_pretrained(output_dir)
                     except:
@@ -184,15 +191,15 @@ def evaluate(args, model, tokenizer, prefix=""):
 
         with torch.no_grad():
             inputs = {
-                'input_ids':      batch[0],
+                'input_ids': batch[0],
                 'attention_mask': batch[1]
             }
-            
+
             if args.model_type != 'distilbert':
                 inputs['token_type_ids'] = None if args.model_type == 'xlm' else batch[2]  # XLM don't use segment_ids
 
             example_indices = batch[3]
-            
+
             # XLNet and XLM use more arguments for their predictions
             if args.model_type in ['xlnet', 'xlm']:
                 inputs.update({'cls_index': batch[5], 'p_mask': batch[6]})
@@ -215,14 +222,14 @@ def evaluate(args, model, tokenizer, prefix=""):
                 cls_logits = output[4]
 
                 result = SquadResult(
-                    unique_id, start_logits, end_logits, 
-                    start_top_index=start_top_index, 
-                    end_top_index=end_top_index, 
+                    unique_id, start_logits, end_logits,
+                    start_top_index=start_top_index,
+                    end_top_index=end_top_index,
                     cls_logits=cls_logits
                 )
 
             else:
-                start_logits, end_logits, choice_logits  = output
+                start_logits, end_logits, choice_logits = output
                 result = SquadResult(
                     unique_id, start_logits, end_logits, choice_logits
                 )
@@ -248,15 +255,16 @@ def evaluate(args, model, tokenizer, prefix=""):
         end_n_top = model.config.end_n_top if hasattr(model, "config") else model.module.config.end_n_top
 
         predictions = compute_predictions_log_probs(examples, features, all_results, args.n_best_size,
-                        args.max_answer_length, output_prediction_file,
-                        output_nbest_file, output_null_log_odds_file,
-                        start_n_top, end_n_top,
-                        args.version_2_with_negative, tokenizer, args.verbose_logging)
+                                                    args.max_answer_length, output_prediction_file,
+                                                    output_nbest_file, output_null_log_odds_file,
+                                                    start_n_top, end_n_top,
+                                                    args.version_2_with_negative, tokenizer, args.verbose_logging)
     else:
         predictions = compute_predictions_logits(examples, features, all_results, args.n_best_size,
-                        args.max_answer_length, args.do_lower_case, output_prediction_file,
-                        output_nbest_file, output_null_log_odds_file, args.verbose_logging,
-                        args.version_2_with_negative, args.null_score_diff_threshold, tokenizer)
+                                                 args.max_answer_length, args.do_lower_case, output_prediction_file,
+                                                 output_nbest_file, output_null_log_odds_file, args.verbose_logging,
+                                                 args.version_2_with_negative, args.null_score_diff_threshold,
+                                                 tokenizer)
 
     with open(os.path.join(args.output_dir, str(prefix) + "_eval_examples.pkl"), 'wb') as f:
         pickle.dump(examples, f)
@@ -266,25 +274,27 @@ def evaluate(args, model, tokenizer, prefix=""):
         pickle.dump(all_results, f)
 
     # Compute the F1 and exact scores.
-    #results = squad_evaluate(examples, predictions)
-    #SQuAD 2.0
+    # results = squad_evaluate(examples, predictions)
+    # SQuAD 2.0
     # results = eval_squad(args.predict_file, output_prediction_file, output_null_log_odds_file,
     #                         args.null_score_diff_threshold)
-    results = eval_squad(os.path.join(args.data_dir, args.predict_file), output_prediction_file, output_null_log_odds_file,
-                            args.null_score_diff_threshold)
-        # print("\n> ", results)
-    
+    results = eval_squad(os.path.join(args.data_dir, args.predict_file), output_prediction_file,
+                         output_null_log_odds_file,
+                         args.null_score_diff_threshold)
+    # print("\n> ", results)
+
     return results
+
 
 def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=False):
     # Load data features from cache or dataset file
     input_dir = args.data_dir if args.data_dir else "."
-    
+
     cached_features_file = os.path.join(input_dir, 'bce_reader_cached_{}_{}_{}_{}'.format(
         args.predict_file if evaluate else args.train_file,
         list(filter(None, args.model_name_or_path.split('/'))).pop(),
         str(args.max_seq_length), str(args.doc_stride)),
-    )
+                                        )
 
     # Init features and dataset from cache if it exists
     if os.path.exists(cached_features_file) and not args.overwrite_cache and not output_examples:
@@ -315,18 +325,19 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
 
     if output_examples:
         return dataset, examples, features
-    
+
     return dataset
+
 
 def main():
     parser = argparse.ArgumentParser()
 
     ## Required parameters
-    parser.add_argument("--model_type", default=None, type=str, required=True,
+    parser.add_argument("--model_type", default='deberta-v3', type=str,
                         help="Model type selected in the list: " + ", ".join(MODEL_CLASSES.keys()))
-    parser.add_argument("--model_name_or_path", default=None, type=str, required=True,
+    parser.add_argument("--model_name_or_path", default='models/bdi-debertav3-xsmall', type=str,
                         help="Path to pre-trained model.")
-    parser.add_argument("--output_dir", default=None, type=str, required=True,
+    parser.add_argument("--output_dir", default='models/bdi-mrc/debertav3', type=str,
                         help="The output directory where the model checkpoints and predictions will be written.")
 
     ## Others parameters
@@ -334,9 +345,9 @@ def main():
                         help="right/left, padding_side of passage / question")
     parser.add_argument("--data_dir", default="", type=str,
                         help="The input data dir. Should contain the .json files for the task.")
-    parser.add_argument("--train_file", default=None, type=str,
+    parser.add_argument("--train_file", default='data/bdi-mrc/dev-v2.0.json', type=str,
                         help="The input training file. If a data dir is specified, will look for the file there.")
-    parser.add_argument("--predict_file", default=None, type=str,
+    parser.add_argument("--predict_file", default='data/bdi-mrc/dev-v2.0.json', type=str,
                         help="The input evaluation file. If a data dir is specified, will look for the file there.")
     parser.add_argument("--config_name", default="", type=str,
                         help="Pretrained config name or path if not the same as model_name")
@@ -413,9 +424,13 @@ def main():
 
     args = parser.parse_args()
 
-    if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
+    args.version_2_with_negative = True
+
+    if os.path.exists(args.output_dir) and os.listdir(
+            args.output_dir) and args.do_train and not args.overwrite_output_dir:
         raise ValueError(
-            "Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
+            "Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(
+                args.output_dir))
 
     # Setup CUDA, GPU & distributed training
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -424,9 +439,9 @@ def main():
     args.device = device
 
     # Setup logging
-    logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                        datefmt = '%m/%d/%Y %H:%M:%S',
-                        level = logging.INFO)
+    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt='%m/%d/%Y %H:%M:%S',
+                        level=logging.INFO)
     logger.warning("Process device: %s, n_gpu: %s", device, args.n_gpu)
 
     # Set seed
@@ -438,7 +453,7 @@ def main():
 
     config = config_class.from_pretrained(args.model_name_or_path)
     tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
-    model = model_class(config)
+    model = model_class(config, args=args)
 
     model.to(args.device)
 
@@ -452,7 +467,7 @@ def main():
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Save the trained model and the tokenizer
-    if args.do_train :
+    if args.do_train:
         # Create output directory if needed
         if not os.path.exists(args.output_dir):
             os.makedirs(args.output_dir)
@@ -460,7 +475,8 @@ def main():
         logger.info("Saving model checkpoint to %s", args.output_dir)
         # Save a trained model, configuration and tokenizer using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
-        model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+        # Take care of distributed/parallel training
+        model_to_save = model.module if hasattr(model, 'module') else model
         model_to_save.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
 
@@ -479,11 +495,13 @@ def main():
             logger.info("Loading checkpoints saved during training for evaluation")
             checkpoints = [args.output_dir]
             if args.eval_all_checkpoints:
-                checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
+                checkpoints = list(os.path.dirname(c) for c in
+                                   sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
                 logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)  # Reduce model loading logs
         else:
             if args.eval_all_checkpoints:
-                checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
+                checkpoints = list(os.path.dirname(c) for c in
+                                   sorted(glob.glob(args.output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
                 logger.info("Loading checkpoint %s for evaluation", checkpoints)
                 logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)  # Reduce model loading logs
             else:
@@ -510,6 +528,7 @@ def main():
     logger.info(f"Running time: {runtime}")
 
     return results
+
 
 if __name__ == "__main__":
     main()
