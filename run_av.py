@@ -18,9 +18,16 @@ from torch.utils.data import (
     RandomSampler,
     SequentialSampler,
 )
-from transformers import WEIGHTS_NAME, DebertaV2Tokenizer, DebertaV2Config, RobertaTokenizer, RobertaConfig
+from transformers import (
+    DebertaV2Tokenizer,
+    DebertaV2Config,
+    RobertaTokenizer,
+    RobertaConfig,
+    DebertaV2ForQuestionAnswering
+)
 from transformers import (
     AdamW,
+    WEIGHTS_NAME,
     get_linear_schedule_with_warmup,
     squad_convert_examples_to_features
 )
@@ -40,7 +47,7 @@ from modeling_roberta import RobertaForQuestionAnsweringAVPool
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
-    'deberta-v3': (DebertaV2Config, DebertaV3ForQuestionAnsweringAVPool, DebertaV2Tokenizer),
+    'deberta-v3': (DebertaV2Config, DebertaV2ForQuestionAnswering, DebertaV2Tokenizer),
     'roberta': (RobertaConfig, RobertaForQuestionAnsweringAVPool, RobertaTokenizer)
 }
 
@@ -107,7 +114,7 @@ def train(args, train_dataset, model, tokenizer):
                 'attention_mask': batch[1],
                 'start_positions': batch[3],
                 'end_positions': batch[4],
-                'is_impossibles': batch[5]
+                # 'is_impossibles': batch[5]
             }
             # if args.model_type != 'xlm-roberta':
             #     inputs['is_impossibles'] = batch[5]
@@ -383,7 +390,7 @@ def main():
                         help="The initial learning rate for Adam.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
-    parser.add_argument("--weight_decay", default=0.01, type=float,
+    parser.add_argument("--weight_decay", default=0.00, type=float,
                         help="Weight decay if we apply some.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float,
                         help="Epsilon for Adam optimizer.")
@@ -517,6 +524,7 @@ def main():
             result = evaluate(args, model, tokenizer, prefix=global_step)
 
             result = dict((k + ('_{}'.format(global_step) if global_step else ''), v) for k, v in result.items())
+            logger.info(f"Results of {checkpoint}: {result}")
             results.update(result)
 
     logger.info("Results: {}".format(results))
