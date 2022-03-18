@@ -4,7 +4,7 @@ export TRAIN_FILE=train-v2.0-uncased.json
 export DEV_FILE=dev-v2.0-uncased.json
 python ./run_av.py \
     --model_type deberta-v3 \
-    --model_name_or_path models/bdi-debertav3-xsmall \
+    --model_name_or_path models/bdi-debertav3-xxsmall \
     --do_train \
     --do_eval \
     --do_lower_case \
@@ -16,8 +16,8 @@ python ./run_av.py \
     --max_seq_length 512 \
     --doc_stride 128 \
     --max_query_length=64 \
-    --per_gpu_train_batch_size=16 \
-    --per_gpu_eval_batch_size=32 \
+    --per_gpu_train_batch_size=8 \
+    --per_gpu_eval_batch_size=16 \
     --warmup_steps=0 \
     --output_dir models/bdi_mrc/debertav3 \
     --eval_all_checkpoints \

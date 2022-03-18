@@ -48,7 +48,8 @@ logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
     'deberta-v3': (DebertaV2Config, DebertaV2ForQuestionAnswering, DebertaV2Tokenizer),
-    'roberta': (RobertaConfig, RobertaForQuestionAnsweringAVPool, RobertaTokenizer)
+    'deberta-v3-pool': (DebertaV2Config, DebertaV3ForQuestionAnsweringAVPool, DebertaV2Tokenizer),
+    'roberta-pool': (RobertaConfig, RobertaForQuestionAnsweringAVPool, RobertaTokenizer)
 }
 
 
@@ -112,6 +113,7 @@ def train(args, train_dataset, model, tokenizer):
             inputs = {
                 'input_ids': batch[0],
                 'attention_mask': batch[1],
+                'token_type_ids': batch[2],
                 'start_positions': batch[3],
                 'end_positions': batch[4],
                 # 'is_impossibles': batch[5]
@@ -119,8 +121,8 @@ def train(args, train_dataset, model, tokenizer):
             # if args.model_type != 'xlm-roberta':
             #     inputs['is_impossibles'] = batch[5]
 
-            if args.model_type != 'distilbert':
-                inputs['token_type_ids'] = None if args.model_type == 'xlm' else batch[2]
+            if args.model_type == 'deberta-v3-pool':
+                inputs['is_impossibles'] = batch[5]
 
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
@@ -198,43 +200,27 @@ def evaluate(args, model, tokenizer, prefix=""):
         with torch.no_grad():
             inputs = {
                 'input_ids': batch[0],
-                'attention_mask': batch[1]
+                'attention_mask': batch[1],
+                'token_type_ids': batch[2]
             }
 
-            if args.model_type != 'distilbert':
-                inputs['token_type_ids'] = None if args.model_type == 'xlm' else batch[2]  # XLM don't use segment_ids
-
             example_indices = batch[3]
-
-            # XLNet and XLM use more arguments for their predictions
-            if args.model_type in ['xlnet', 'xlm']:
-                inputs.update({'cls_index': batch[5], 'p_mask': batch[6]})
-
             outputs = model(**inputs)
+
+            out_start_logits, out_end_logits = outputs['start_logits'], outputs['end_logits']
 
         for i, example_index in enumerate(example_indices):
             eval_feature = features[example_index.item()]
             unique_id = int(eval_feature.unique_id)
 
-            output = [to_list(output[i]) for output in outputs]
-
-            # Some models (XLNet, XLM) use 5 arguments for their predictions, while the other "simpler"
-            # models only use two.
-            if len(output) >= 5:
-                start_logits = output[0]
-                start_top_index = output[1]
-                end_logits = output[2]
-                end_top_index = output[3]
-                cls_logits = output[4]
-
+            if args.model_type == 'deberta-v3':
+                start_logits, end_logits = to_list(out_start_logits[i]), to_list(out_end_logits[i])
                 result = SquadResult(
-                    unique_id, start_logits, end_logits,
-                    start_top_index=start_top_index,
-                    end_top_index=end_top_index,
-                    cls_logits=cls_logits
+                    unique_id, start_logits, end_logits
                 )
 
             else:
+                output = [to_list(output[i]) for output in outputs]
                 start_logits, end_logits, choice_logits = output
                 result = SquadResult(
                     unique_id, start_logits, end_logits, choice_logits
@@ -254,23 +240,11 @@ def evaluate(args, model, tokenizer, prefix=""):
     else:
         output_null_log_odds_file = None
 
-    # XLNet and XLM use a more complex post-processing procedure
-    # for i in range(0.0, 1.0, 0.01):
-    if args.model_type in ['xlnet', 'xlm']:
-        start_n_top = model.config.start_n_top if hasattr(model, "config") else model.module.config.start_n_top
-        end_n_top = model.config.end_n_top if hasattr(model, "config") else model.module.config.end_n_top
-
-        predictions = compute_predictions_log_probs(examples, features, all_results, args.n_best_size,
-                                                    args.max_answer_length, output_prediction_file,
-                                                    output_nbest_file, output_null_log_odds_file,
-                                                    start_n_top, end_n_top,
-                                                    args.version_2_with_negative, tokenizer, args.verbose_logging)
-    else:
-        predictions = compute_predictions_logits(examples, features, all_results, args.n_best_size,
-                                                 args.max_answer_length, args.do_lower_case, output_prediction_file,
-                                                 output_nbest_file, output_null_log_odds_file, args.verbose_logging,
-                                                 args.version_2_with_negative, args.null_score_diff_threshold,
-                                                 tokenizer)
+    predictions = compute_predictions_logits(examples, features, all_results, args.n_best_size,
+                                             args.max_answer_length, args.do_lower_case, output_prediction_file,
+                                             output_nbest_file, output_null_log_odds_file, args.verbose_logging,
+                                             args.version_2_with_negative, args.null_score_diff_threshold,
+                                             tokenizer)
 
     with open(os.path.join(args.output_dir, str(prefix) + "_eval_examples.pkl"), 'wb') as f:
         pickle.dump(examples, f)
