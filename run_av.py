@@ -117,7 +117,6 @@ def train(args, train_dataset, model, tokenizer):
 
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
-            print(f"----- loss: {loss}")
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -306,8 +305,6 @@ def load_and_cache_examples(args, tokenizer, evaluate=False, output_examples=Fal
 
         processor = SquadV2Processor() if args.version_2_with_negative else SquadV1Processor()
 
-        print(f"FILES: {args.train_file} | {args.predict_file}")
-
         if evaluate:
             examples = processor.get_dev_examples(args.data_dir, filename=args.predict_file)
         else:
@@ -453,7 +450,7 @@ def main():
 
     config = config_class.from_pretrained(args.model_name_or_path)
     tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
-    model = model_class(config, args=args)
+    model = model_class.from_pretrained(args.model_name_or_path)
 
     model.to(args.device)
 
@@ -475,8 +472,8 @@ def main():
         logger.info("Saving model checkpoint to %s", args.output_dir)
         # Save a trained model, configuration and tokenizer using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
-        # Take care of distributed/parallel training
-        model_to_save = model.module if hasattr(model, 'module') else model
+        model_to_save = model.module if hasattr(model,
+                                                'module') else model  # Take care of distributed/parallel training
         model_to_save.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
 
@@ -484,7 +481,7 @@ def main():
         torch.save(args, os.path.join(args.output_dir, 'training_args.bin'))
 
         # Load a trained model and vocabulary that you have fine-tuned
-        model = model_class(config)
+        model = model_class.from_pretrained(args.output_dir, force_download=True)
         tokenizer = tokenizer_class.from_pretrained(args.output_dir, do_lower_case=args.do_lower_case)
         model.to(args.device)
 

@@ -10,10 +10,10 @@ from transformers import DebertaV2Model, DebertaV2PreTrainedModel
 
 
 class DebertaV3ForQuestionAnsweringAVPool(DebertaV2PreTrainedModel):
-    def __init__(self, config, args):
+    def __init__(self, config):
         super(DebertaV3ForQuestionAnsweringAVPool, self).__init__(config)
         self.num_labels = config.num_labels
-        self.deberta = DebertaV2Model.from_pretrained(args.model_name_or_path)
+        self.deberta = DebertaV2Model(config)
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
         self.has_ans = nn.Sequential(
             nn.Dropout(p=config.hidden_dropout_prob),
