@@ -1,6 +1,6 @@
 # Machine Reading Comprehension (MRC)
 
-Machine Reading Comprehension (MRC) for SQuAD v1.0, SQuAD v2.0 using Deberta, DebertaV3.
+Machine Reading Comprehension (MRC) for SQuAD v1.0, SQuAD v2.0 using Deberta, DebertaV3. SoTA model in MRC task 2022.
 
 
 ### Usage
